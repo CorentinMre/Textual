@@ -33,7 +33,7 @@ Textual is a **terminal-based messaging application** built with **Go** that off
 
 ### Prerequisites
 - Go 1.22.2 or later
-- Docker (optional, for containerized deployment)
+- Docker
 - PostgreSQL database
 
 ### Clone the Repository
@@ -56,6 +56,10 @@ SERVER_HOST=
 ```
 
 
+### install dependencies
+```bash
+go mod tidy
+```
 
 ### Using Docker
 Build and run the application with Docker:
