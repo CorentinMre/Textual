@@ -1,8 +1,8 @@
 <h1 align="center">Textual</h1>
 
-<!-- <p align="center">
-  <img src="your-logo-path.png" alt="Textual Logo" width="200" />
-</p> -->
+<p align="center">
+  <img src="img/logo.png" alt="Textual Logo" width="200" />
+</p>
 
 <p align="center">
   <strong>Light. Fast. Self-Hosted.</strong>
