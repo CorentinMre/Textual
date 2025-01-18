@@ -64,7 +64,7 @@ go mod tidy
 ### Using Docker
 Build and run the application with Docker:
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 ### Run the Client
