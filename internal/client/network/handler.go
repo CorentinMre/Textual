@@ -26,6 +26,7 @@ type ConnectionHandler struct {
     mu           sync.RWMutex
     authComplete bool
     userID       string
+    authError error
 }
 
 func NewConnectionHandler(conn net.Conn) *ConnectionHandler {
@@ -267,27 +268,44 @@ func (h *ConnectionHandler) handleAuthResponse(msg protocol.Message) {
     data, err := json.Marshal(msg.Payload)
     if err != nil {
         log.Printf("Failed to marshal auth payload: %v", err)
+        h.setAuthError(err)
         return
     }
 
     if err := json.Unmarshal(data, &authResp); err != nil {
         log.Printf("Failed to unmarshal auth payload: %v", err)
+        h.setAuthError(err)
         return
     }
 
     h.mu.Lock()
+    defer h.mu.Unlock()
+    
     if authResp.Success {
         h.authComplete = true
         h.userID = authResp.UserID
+        h.authError = nil
         log.Printf("Authentication successful. UserID: %s", h.userID)
     } else {
         h.authComplete = false
+        h.authError = fmt.Errorf("authentication failed: %s", authResp.Error)
         if h.onError != nil {
-            h.onError(fmt.Errorf("authentication failed: %s", authResp.Error))
+            h.onError(h.authError)
         }
         log.Printf("Authentication failed: %s", authResp.Error)
     }
-    h.mu.Unlock()
+}
+
+func (h *ConnectionHandler) setAuthError(err error) {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    h.authError = err
+}
+
+func (h *ConnectionHandler) GetAuthError() error {
+    h.mu.RLock()
+    defer h.mu.RUnlock()
+    return h.authError
 }
 
 func (h *ConnectionHandler) SendAuthRequest(username, password string) error {

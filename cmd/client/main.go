@@ -11,8 +11,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/joho/godotenv"
 )
+
 
 type AppModel struct {
     loginModel  tui.LoginModel
@@ -22,6 +22,7 @@ type AppModel struct {
     err        error
 }
 
+
 func NewAppModel() AppModel {
     return AppModel{
         loginModel: tui.NewLoginModel(),
@@ -29,29 +30,37 @@ func NewAppModel() AppModel {
     }
 }
 
+
 func (m AppModel) Init() tea.Cmd {
     return m.loginModel.Init()
 }
 
+// state machine
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     var cmd tea.Cmd
 
     switch msg := msg.(type) {
     case tui.LoginSuccessMsg:
         var err error
-        m.connection, err = m.setupConnection(msg.Username, msg.Password)
+        serverAddr := fmt.Sprintf("%s:%s", msg.ServerHost, msg.ServerPort)
+        m.connection, err = m.setupConnection(msg.Username, msg.Password, serverAddr)
         if err != nil {
             log.Printf("Setup connection error: %v", err)
-            m.err = err
-            return m, tea.Quit
+            newModel, newCmd := m.loginModel.Update(tui.LoginErrorMsg{Error: err})
+            if loginModel, ok := newModel.(tui.LoginModel); ok {
+                m.loginModel = loginModel
+                return m, newCmd
+            }
+            return m, nil
         }
         m.isLoggedIn = true
 
+        // conf of callback to send messages
         sendMessage := func(content string, recipientID *string, groupID *string) error {
             return m.connection.SendMessage(content, recipientID, groupID)
         }
 
-        // init chat model with handler
+        // init chat model
         m.chatModel = tui.NewModel(sendMessage)
         m.chatModel.SetConnection(m.connection)
 
@@ -85,7 +94,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         }
 
     case models.ErrorMsg:
-        if m.isLoggedIn {
+        if !m.isLoggedIn {
+            // if not logged in, show error in login screen
+            newModel, newCmd := m.loginModel.Update(tui.LoginErrorMsg{Error: fmt.Errorf(msg.Error)})
+            if loginModel, ok := newModel.(tui.LoginModel); ok {
+                m.loginModel = loginModel
+                return m, newCmd
+            }
+        } else {
+            // else show in chat screen
             newModel, newCmd := m.chatModel.Update(msg)
             if chatModel, ok := newModel.(tui.Model); ok {
                 m.chatModel = chatModel
@@ -112,6 +129,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     return m, cmd
 }
 
+// return the view of the current state
 func (m AppModel) View() string {
     if m.err != nil {
         return fmt.Sprintf("Error: %v", m.err)
@@ -123,19 +141,28 @@ func (m AppModel) View() string {
     return m.loginModel.View()
 }
 
-func (m *AppModel) setupConnection(username, password string) (*network.ConnectionHandler, error) {
-    log.Printf("Setting up connection for user: %s", username)
+// setup connection with serv
+func (m *AppModel) setupConnection(username, password, serverAddr string) (*network.ConnectionHandler, error) {
+    log.Printf("Setting up connection for user: %s to server: %s", username, serverAddr)
     
-    conn, err := network.NewConnection(fmt.Sprintf("%s:%s",
-        os.Getenv("SERVER_HOST"),
-        os.Getenv("SERVER_PORT")))
+    
+    conn, err := network.NewConnection(serverAddr)
     if err != nil {
         return nil, fmt.Errorf("connection error: %v", err)
     }
 
+    
     handler := network.NewConnectionHandler(conn.GetUnderlyingConn())
     
-    // conf of message handler callbacks
+    
+    handler.SetErrorHandler(func(err error) {
+        log.Printf("Error received: %v", err)
+        if p != nil {
+            p.Send(models.ErrorMsg{Error: err.Error()})
+        }
+    })
+
+    // temp conf
     handler.SetMessageHandler(func(msg models.Message) {
         log.Printf("Message received in main: %+v", msg)
         if p != nil {
@@ -144,7 +171,7 @@ func (m *AppModel) setupConnection(username, password string) (*network.Connecti
                     Request: models.FriendRequest{
                         ID:        msg.ID,
                         FromUser:  msg.SenderID,
-                        ToUser:    "", // sera rempli côté serveur
+                        ToUser:    "",
                         Status:    "pending",
                         CreatedAt: msg.SentAt,
                     },
@@ -155,17 +182,10 @@ func (m *AppModel) setupConnection(username, password string) (*network.Connecti
         }
     })
 
-    handler.SetErrorHandler(func(err error) {
-        log.Printf("Error received: %v", err)
-        if p != nil {
-            p.Send(models.ErrorMsg{Error: err.Error()})
-        }
-    })
-
-    // start connection handler
+    // start the handler
     handler.Start()
 
-    // auth request
+    // try to authenticate
     if err := handler.SendAuthRequest(username, password); err != nil {
         return nil, fmt.Errorf("authentication error: %v", err)
     }
@@ -175,6 +195,10 @@ func (m *AppModel) setupConnection(username, password string) (*network.Connecti
     for !handler.IsAuthenticated() {
         if time.Since(startTime) > 5*time.Second {
             return nil, fmt.Errorf("authentication timeout")
+        }
+        // check for auth error
+        if handler.GetAuthError() != nil {
+            return nil, handler.GetAuthError()
         }
         time.Sleep(100 * time.Millisecond)
     }
@@ -194,11 +218,7 @@ func main() {
     defer logFile.Close()
     log.SetOutput(logFile)
 
-    if err := godotenv.Load(); err != nil {
-        log.Fatal("Error loading .env file")
-    }
-
-    // model
+    // init app model
     model := NewAppModel()
 
     // start program

@@ -2,10 +2,11 @@
 package tui
 
 import (
-    "fmt"
-    "github.com/charmbracelet/bubbles/textinput"
-    tea "github.com/charmbracelet/bubbletea"
-    "github.com/charmbracelet/lipgloss"
+	"fmt"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (
@@ -27,10 +28,12 @@ var (
 type LoginModel struct {
     username    textinput.Model
     password    textinput.Model
-    focusIndex int
-    err        error
-    width      int
-    height     int
+    serverHost  textinput.Model
+    serverPort  textinput.Model
+    focusIndex  int
+    err         error
+    width       int
+    height      int
 }
 
 func NewLoginModel() LoginModel {
@@ -42,9 +45,17 @@ func NewLoginModel() LoginModel {
     password.Placeholder = "Password"
     password.EchoMode = textinput.EchoPassword
 
+    serverHost := textinput.New()
+    serverHost.Placeholder = "Server Host (default: localhost)"
+
+    serverPort := textinput.New()
+    serverPort.Placeholder = "Server Port (default: 8080)"
+
     return LoginModel{
         username:    username,
         password:    password,
+        serverHost:  serverHost,
+        serverPort:  serverPort,
         focusIndex:  0,
     }
 }
@@ -62,21 +73,38 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         case "ctrl+c":
             return m, tea.Quit
         case "tab", "shift+tab":
-            // Cycle focus
+            // Cycle focus between all inputs
             if msg.String() == "tab" {
-                m.focusIndex = (m.focusIndex + 1) % 2
+                m.focusIndex = (m.focusIndex + 1) % 4
             } else {
-                m.focusIndex = (m.focusIndex - 1 + 2) % 2
+                m.focusIndex = (m.focusIndex - 1 + 4) % 4
             }
 
-            if m.focusIndex == 0 {
-                m.username.Focus()
-                m.password.Blur()
-            } else {
-                m.username.Blur()
-                m.password.Focus()
+            for i := range []textinput.Model{m.username, m.password, m.serverHost, m.serverPort} {
+                if i == m.focusIndex {
+                    switch i {
+                    case 0:
+                        m.username.Focus()
+                    case 1:
+                        m.password.Focus()
+                    case 2:
+                        m.serverHost.Focus()
+                    case 3:
+                        m.serverPort.Focus()
+                    }
+                } else {
+                    switch i {
+                    case 0:
+                        m.username.Blur()
+                    case 1:
+                        m.password.Blur()
+                    case 2:
+                        m.serverHost.Blur()
+                    case 3:
+                        m.serverPort.Blur()
+                    }
+                }
             }
-
             return m, nil
 
         case "enter":
@@ -84,11 +112,24 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
                 m.err = fmt.Errorf("username and password are required")
                 return m, nil
             }
-            // send login message
+
+            // Use default values if not specified
+            host := "localhost"
+            if m.serverHost.Value() != "" {
+                host = m.serverHost.Value()
+            }
+
+            port := "8080"
+            if m.serverPort.Value() != "" {
+                port = m.serverPort.Value()
+            }
+
             return m, func() tea.Msg {
                 return LoginSuccessMsg{
-                    Username: m.username.Value(),
-                    Password: m.password.Value(),
+                    Username:   m.username.Value(),
+                    Password:   m.password.Value(),
+                    ServerHost: host,
+                    ServerPort: port,
                 }
             }
         }
@@ -96,13 +137,20 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     case tea.WindowSizeMsg:
         m.width = msg.Width
         m.height = msg.Height
+        
+    case LoginErrorMsg:
+        m.err = msg.Error
     }
 
-    // Update the inputs
+    // Update all inputs
     var cmd tea.Cmd
     m.username, cmd = m.username.Update(msg)
     cmds = append(cmds, cmd)
     m.password, cmd = m.password.Update(msg)
+    cmds = append(cmds, cmd)
+    m.serverHost, cmd = m.serverHost.Update(msg)
+    cmds = append(cmds, cmd)
+    m.serverPort, cmd = m.serverPort.Update(msg)
     cmds = append(cmds, cmd)
 
     return m, tea.Batch(cmds...)
@@ -120,6 +168,10 @@ func (m LoginModel) View() string {
     content += m.username.View()
     content += "\n\nPassword:\n"
     content += m.password.View()
+    content += "\n\nServer Host:\n"
+    content += m.serverHost.View()
+    content += "\n\nServer Port:\n"
+    content += m.serverPort.View()
     content += "\n\n"
 
     // Help
@@ -127,7 +179,7 @@ func (m LoginModel) View() string {
 
     // Error
     if m.err != nil {
-        content += "\n" + errorStyle.Render(m.err.Error())
+        content += "\n\n" + errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
     }
 
     // Center everything
@@ -140,8 +192,13 @@ func (m LoginModel) View() string {
     )
 }
 
-// Messages pour la communication entre les modèles
 type LoginSuccessMsg struct {
-    Username string
-    Password string
+    Username   string
+    Password   string
+    ServerHost string
+    ServerPort string
+}
+
+type LoginErrorMsg struct {
+    Error error
 }
